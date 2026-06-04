@@ -1,0 +1,1512 @@
+---
+title: "Untitled"
+author: "Iván López Alarcón"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+setwd("C:/Users/CNE Three/Desktop/Chapingo/Tesis")
+```
+
+```{r}
+# ==========================================================
+# CENSO TECOMATLÁN
+# MAPA + TABLA EN HOJAS SEPARADAS
+# ==========================================================
+
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggspatial)
+library(gridExtra)
+library(grid)
+
+options(scipen=999)
+
+# ==========================================================
+# 1. CARPETA
+# ==========================================================
+
+dir.create(
+  "mapas",
+  showWarnings=FALSE
+)
+
+# ==========================================================
+# 2. LEER SHAPEFILES
+# ==========================================================
+
+manzanas <- st_read(
+  "datos/21m.shp",
+  options="ENCODING=latin1",
+  quiet=TRUE
+)
+
+localidades <- st_read(
+  "datos/21l.shp",
+  options="ENCODING=latin1",
+  quiet=TRUE
+)
+
+vialidades <- st_read(
+  "datos/21e.shp",
+  options="ENCODING=latin1",
+  quiet=TRUE
+)
+
+# ==========================================================
+# 3. FILTRAR TECOMATLÁN
+# ==========================================================
+
+teco_mzn <- manzanas %>%
+  filter(CVE_MUN=="155")
+
+teco_loc <- localidades %>%
+  filter(CVE_MUN=="155")
+
+teco_via <- vialidades %>%
+  filter(CVE_MUN=="155")
+
+# ==========================================================
+# 4. CRS
+# ==========================================================
+
+crs_ref <- st_crs(
+  teco_mzn
+)
+
+teco_loc <- st_transform(
+  teco_loc,
+  crs_ref
+)
+
+teco_via <- st_transform(
+  teco_via,
+  crs_ref
+)
+
+# ==========================================================
+# 5. PUNTOS OPERATIVOS
+# ==========================================================
+
+teco_mzn <- teco_mzn %>%
+
+mutate(
+
+VIV_ID=
+
+paste0(
+
+"V",
+
+sprintf(
+
+"%04d",
+
+row_number()
+
+)
+
+)
+
+)
+
+viviendas <- st_centroid(
+  teco_mzn
+)
+
+# ==========================================================
+# 6. DIVIDIR 30 ZONAS
+# ==========================================================
+
+coords <- st_coordinates(
+  viviendas
+)
+
+set.seed(123)
+
+km <- kmeans(
+
+coords,
+
+centers=30,
+
+nstart=100
+
+)
+
+teco_mzn$ZONA <- km$cluster
+
+viviendas$ZONA <- km$cluster
+
+zonas <- teco_mzn %>%
+
+group_by(
+
+ZONA
+
+)%>%
+
+summarise(
+
+geometry=
+
+st_union(
+
+geometry
+
+),
+
+.groups="drop"
+
+)
+
+# ==========================================================
+# 7. MAPA GENERAL
+# ==========================================================
+
+general <- ggplot()+
+
+geom_sf(
+
+data=teco_mzn,
+
+aes(
+
+fill=factor(ZONA)
+
+),
+
+color="white",
+
+linewidth=.05
+
+)+
+
+geom_sf(
+
+data=zonas,
+
+fill=NA,
+
+color="black",
+
+linewidth=.5
+
+)+
+
+geom_sf_text(
+
+data=zonas,
+
+aes(
+
+label=ZONA
+
+),
+
+size=3
+
+)+
+
+annotation_scale(
+location="bl"
+)+
+
+annotation_north_arrow(
+location="tr"
+)+
+
+theme_void()+
+
+theme(
+legend.position="none"
+)
+
+ggsave(
+
+"mapas/00_GENERAL.pdf",
+
+general,
+
+width=11,
+
+height=8.5
+
+)
+
+# ==========================================================
+# 8. PDF OPERATIVO
+# ==========================================================
+
+for(i in 1:30){
+
+cat("Zona",i,"\n")
+
+zona <- zonas %>%
+  filter(ZONA==i)
+
+buffer <- st_buffer(
+  zona,
+  250
+)
+
+calles <- tryCatch(
+
+st_intersection(
+  teco_via,
+  buffer
+),
+
+error=function(e)
+teco_via[0,]
+
+)
+
+loc <- tryCatch(
+
+st_intersection(
+  teco_loc,
+  buffer
+),
+
+error=function(e)
+teco_loc[0,]
+
+)
+
+viv <- tryCatch(
+
+st_intersection(
+ viviendas,
+ buffer
+),
+
+error=function(e)
+viviendas[0,]
+
+)
+
+mzn <- tryCatch(
+
+st_intersection(
+ teco_mzn,
+ buffer
+),
+
+error=function(e)
+teco_mzn[0,]
+
+)
+
+# WGS84 NO NECESARIO
+# todo queda mismo CRS
+
+mapa <- ggplot()+
+
+# MANZANAS
+
+geom_sf(
+
+data=mzn,
+
+fill="gray90",
+
+color="white",
+
+linewidth=.12
+
+)+
+
+# REFERENCIA VIVIENDA
+
+geom_sf(
+
+data=viv,
+
+shape=21,
+
+fill="black",
+
+size=2
+
+)+
+
+# CALLES
+
+geom_sf(
+
+data=calles,
+
+color="gray30",
+
+linewidth=.45
+
+)+
+
+# NOMBRE CALLES
+
+geom_sf_text(
+
+data=
+
+calles %>%
+
+filter(
+
+!is.na(NOMVIAL),
+
+NOMVIAL!=""
+
+),
+
+aes(
+
+label=NOMVIAL
+
+),
+
+size=2,
+
+check_overlap=TRUE
+
+)+
+
+# LOCALIDAD
+
+geom_sf_text(
+
+data=
+
+loc %>%
+
+filter(
+
+!is.na(NOMGEO),
+
+NOMGEO!=""
+
+),
+
+aes(
+
+label=NOMGEO
+
+),
+
+fontface="bold",
+
+size=3.5,
+
+check_overlap=TRUE
+
+)+
+
+# LIMITE ZONA
+
+geom_sf(
+
+data=zona,
+
+fill=NA,
+
+color="red",
+
+linewidth=.6
+
+)+
+
+annotation_scale(
+
+location="bl"
+
+)+
+
+annotation_north_arrow(
+
+location="tr"
+
+)+
+
+theme_void()+
+
+labs(
+
+title=
+
+paste0(
+
+"TECOMATLÁN - ZONA ",
+
+sprintf(
+
+"%02d",
+
+i)
+
+),
+
+subtitle=
+
+paste(
+
+nrow(viv),
+
+"referencias habitacionales"
+
+)
+
+)
+
+tabla <- viv %>%
+
+st_drop_geometry()%>%
+
+select(VIV_ID)%>%
+
+mutate(
+
+CENSADA="",
+
+PENDIENTE="",
+
+RECHAZO="",
+
+OBSERVACIONES=""
+
+)
+
+tabla_g <- tableGrob(
+
+tabla,
+
+rows=NULL
+
+)
+
+pdf(
+
+paste0(
+
+"mapas/ZONA_",
+
+sprintf("%02d",i),
+
+".pdf"
+
+),
+
+width=11,
+
+height=8.5
+
+)
+
+# PAGINA 1
+
+print(mapa)
+
+# PAGINA 2
+
+grid.newpage()
+
+grid.draw(
+
+arrangeGrob(
+
+textGrob(
+
+paste(
+
+"CONTROL OPERATIVO ZONA",
+
+sprintf("%02d",i)
+
+),
+
+gp=gpar(
+
+fontsize=14,
+
+fontface="bold"
+
+)
+
+),
+
+tabla_g,
+
+ncol=1,
+
+heights=c(.08,.92)
+
+)
+
+)
+
+dev.off()
+
+}
+
+cat(
+
+"\nFINALIZADO\n"
+
+)
+```
+```{r}
+unique(teco_loc$NOMGEO)
+```
+
+```{r}
+# ======================================================
+# CABECERA MUNICIPAL SOLAMENTE
+# ======================================================
+
+cabecera <- teco_loc %>%
+
+filter(
+
+NOMGEO=="Tecomatlán"
+
+)
+
+# Buffer pequeño para incluir calles límite
+
+cabecera_area <- st_buffer(
+
+st_union(cabecera),
+
+50
+
+)
+
+# Manzanas solo cabecera
+
+teco_mzn <- st_intersection(
+
+teco_mzn,
+
+cabecera_area
+
+)
+
+# Calles solo cabecera
+
+teco_via <- st_intersection(
+
+teco_via,
+
+cabecera_area
+
+)
+
+# Localidades visibles
+
+teco_loc <- st_intersection(
+
+teco_loc,
+
+cabecera_area
+
+)
+
+cat(
+
+"Manzanas cabecera:",
+
+nrow(teco_mzn),
+
+"\n"
+
+)
+```
+
+```{r}
+# ======================================================
+# EXTRAER ZONAS DE CABECERA MUNICIPAL
+# ======================================================
+
+dir.create(
+  "mapas/CABECERA",
+  showWarnings = FALSE
+)
+
+# Nombre exacto de la cabecera
+# cambia si INEGI lo tiene distinto
+
+cabecera <- teco_loc %>%
+
+filter(
+
+NOMGEO=="Tecomatlán"
+
+)
+
+# Zonas que tocan cabecera
+
+zonas_cabecera <- zonas %>%
+
+filter(
+
+lengths(
+
+st_intersects(
+
+geometry,
+
+st_union(cabecera)
+
+)
+
+)>0
+
+)
+
+zonas_ids <- zonas_cabecera$ZONA
+
+cat(
+"\nZonas de cabecera:\n"
+)
+
+print(
+zonas_ids
+)
+```
+
+```{r}
+# ======================================================
+# COPIAR PDFs DE CABECERA
+# ======================================================
+
+for(i in zonas_ids){
+
+archivo <- paste0(
+
+"mapas/ZONA_",
+
+sprintf(
+
+"%02d",
+
+i
+
+),
+
+".pdf"
+
+)
+
+destino <- paste0(
+
+"mapas/CABECERA/ZONA_",
+
+sprintf(
+
+"%02d",
+
+i
+
+),
+
+".pdf"
+
+)
+
+if(file.exists(archivo)){
+
+file.copy(
+
+archivo,
+
+destino,
+
+overwrite=TRUE
+
+)
+
+}
+
+}
+
+cat(
+"\nPDFs cabecera listos.\n"
+)
+```
+
+### Cabecera
+
+```{r}
+# ======================================================
+# SEPARAR CABECERA MUNICIPAL
+# ======================================================
+
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggspatial)
+library(grid)
+library(gridExtra)
+
+# ======================================================
+# 1. CREAR CARPETA
+# ======================================================
+
+dir.create(
+  "mapas/CABECERA",
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# ======================================================
+# 2. IDENTIFICAR CABECERA
+# ======================================================
+
+# Si tienes duda:
+# unique(teco_loc$NOMGEO)
+
+cabecera <- teco_loc %>%
+
+filter(
+
+NOMGEO=="Tecomatlán"
+
+)
+
+# ======================================================
+# 3. ZONAS QUE TOCAN CABECERA
+# ======================================================
+
+zonas_cabecera <- zonas %>%
+
+filter(
+
+lengths(
+
+st_intersects(
+
+geometry,
+
+st_union(cabecera)
+
+)
+
+)>0
+
+)
+
+zonas_ids <- zonas_cabecera$ZONA
+
+cat("\n")
+
+cat(
+"Zonas cabecera:\n"
+)
+
+print(
+zonas_ids
+)
+
+# ======================================================
+# 4. GENERAR PDFS
+# ======================================================
+
+for(i in zonas_ids){
+
+cat(
+
+"Procesando zona",
+
+i,
+
+"\n"
+
+)
+
+# ==================================================
+# EXTRAER CAPAS
+# ==================================================
+
+zona <- zonas %>%
+
+filter(
+
+ZONA==i
+
+)
+
+buffer <- st_buffer(
+
+zona,
+
+250
+
+)
+
+mzn_buf <- tryCatch(
+
+st_intersection(
+
+teco_mzn,
+
+buffer
+
+),
+
+error=function(e)
+
+teco_mzn[0,]
+
+)
+
+calles <- tryCatch(
+
+st_intersection(
+
+teco_via,
+
+buffer
+
+),
+
+error=function(e)
+
+teco_via[0,]
+
+)
+
+loc <- tryCatch(
+
+st_intersection(
+
+teco_loc,
+
+buffer
+
+),
+
+error=function(e)
+
+teco_loc[0,]
+
+)
+
+# ==================================================
+# ASEGURAR ID MANZANA
+# ==================================================
+
+mzn_buf <- mzn_buf %>%
+
+mutate(
+
+ID_MANZANA=row_number()
+
+)
+
+# ==================================================
+# REFERENCIA HABITACIONAL
+# ==================================================
+
+pts_ref <- st_centroid(
+
+mzn_buf
+
+)
+
+# ==================================================
+# TRANSFORMAR
+# ==================================================
+
+zona2 <- st_transform(
+
+zona,
+
+4326
+
+)
+
+mzn2 <- st_transform(
+
+mzn_buf,
+
+4326
+
+)
+
+calles2 <- st_transform(
+
+calles,
+
+4326
+
+)
+
+loc2 <- st_transform(
+
+loc,
+
+4326
+
+)
+
+pts2 <- st_transform(
+
+pts_ref,
+
+4326
+
+)
+
+buffer2 <- st_transform(
+
+buffer,
+
+4326
+
+)
+
+bb <- st_bbox(
+
+buffer2
+
+)
+
+# ==================================================
+# MAPA
+# ==================================================
+
+mapa <- ggplot()+
+
+annotation_map_tile(
+
+type="cartolight",
+
+zoom=18
+
+)+
+
+coord_sf(
+
+xlim=c(
+
+bb$xmin,
+
+bb$xmax
+
+),
+
+ylim=c(
+
+bb$ymin,
+
+bb$ymax
+
+),
+
+expand=FALSE
+
+)+
+
+# MANZANAS
+
+geom_sf(
+
+data=mzn2,
+
+fill=alpha(
+
+"#8DA9C4",
+
+0.28
+
+),
+
+color="white",
+
+linewidth=.30
+
+)+
+
+# REFERENCIA HABITACIONAL
+
+geom_sf(
+
+data=pts2,
+
+shape=15,
+
+size=1,
+
+color="black",
+
+alpha=.80
+
+)+
+
+# CALLES
+
+geom_sf(
+
+data=calles2,
+
+color="#FFD700",
+
+linewidth=.65
+
+)+
+
+geom_sf_text(
+
+data=
+
+calles2 %>%
+
+filter(
+
+!is.na(NOMVIAL),
+
+NOMVIAL!=""
+
+),
+
+aes(
+
+label=NOMVIAL
+
+),
+
+size=2,
+
+color="white",
+
+check_overlap=TRUE
+
+)+
+
+# LOCALIDADES
+
+geom_sf_text(
+
+data=
+
+loc2 %>%
+
+filter(
+
+!is.na(NOMGEO),
+
+NOMGEO!=""
+
+),
+
+aes(
+
+label=NOMGEO
+
+),
+
+size=3.5,
+
+fontface="bold",
+
+color="black",
+
+check_overlap=TRUE
+
+)+
+
+# ZONA
+
+geom_sf(
+
+data=zona2,
+
+fill=NA,
+
+color="red",
+
+linewidth=.45
+
+)+
+
+annotation_scale(
+
+location="bl"
+
+)+
+
+annotation_north_arrow(
+
+location="tr"
+
+)+
+
+theme_void()+
+
+labs(
+
+title=paste0(
+
+"CABECERA - ZONA ",
+
+sprintf(
+
+"%02d",
+
+i
+
+)
+
+),
+
+subtitle=paste(
+
+nrow(
+
+mzn_buf
+
+),
+
+"manzanas"
+
+),
+
+caption=
+
+"Encuestador: __________________"
+
+)
+
+# ==================================================
+# TABLA CONTROL
+# ==================================================
+
+tabla_df <- mzn_buf %>%
+
+st_drop_geometry() %>%
+
+mutate(
+
+LOCALIDAD=
+
+if(
+
+"NOMGEO" %in% names(.)
+
+){
+
+ifelse(
+
+is.na(NOMGEO),
+
+"",
+
+NOMGEO
+
+)
+
+}else{
+
+""
+
+}
+
+) %>%
+
+arrange(
+
+ID_MANZANA
+
+) %>%
+
+transmute(
+
+Manzana=
+
+ID_MANZANA,
+
+CVEGEO,
+
+Localidad=
+
+LOCALIDAD,
+
+`Viviendas Totales`=
+
+"______",
+
+Censadas=
+
+"______",
+
+Pendientes=
+
+"______",
+
+Rechazos=
+
+"______",
+
+Observaciones=
+
+"___________________"
+
+)
+
+titulo <- textGrob(
+
+paste0(
+
+"CABECERA MUNICIPAL - ZONA ",
+
+sprintf(
+
+"%02d",
+
+i
+
+)
+
+),
+
+gp=gpar(
+
+fontsize=11,
+
+fontface="bold"
+
+)
+
+)
+
+nota <- textGrob(
+
+"Registrar viviendas censadas, pendientes y rechazos.",
+
+gp=gpar(
+
+fontsize=8
+
+)
+
+)
+
+tabla <- tableGrob(
+
+tabla_df,
+
+rows=NULL,
+
+theme=
+
+ttheme_minimal(
+
+core=list(
+
+fg_params=list(
+
+fontsize=7
+
+),
+
+bg_params=list(
+
+fill=
+
+rep(
+
+c(
+
+"white",
+
+"#EEF2F7"
+
+),
+
+length.out=
+
+nrow(
+
+tabla_df
+
+)
+
+),
+
+col="gray85"
+
+)
+
+),
+
+colhead=list(
+
+fg_params=list(
+
+fontsize=8,
+
+fontface="bold",
+
+col="white"
+
+),
+
+bg_params=list(
+
+fill="#264653"
+
+)
+
+)
+
+)
+
+)
+
+tabla_final <- arrangeGrob(
+
+titulo,
+
+nota,
+
+tabla,
+
+ncol=1,
+
+heights=c(
+
+0.06,
+
+0.05,
+
+0.89
+
+)
+
+)
+
+# ==================================================
+# PDF
+# ==================================================
+
+pdf(
+
+paste0(
+
+"mapas/CABECERA/ZONA_",
+
+sprintf(
+
+"%02d",
+
+i
+
+),
+
+".pdf"
+
+),
+
+width=11,
+
+height=17
+
+)
+
+grid.newpage()
+
+pushViewport(
+
+viewport(
+
+layout=
+
+grid.layout(
+
+2,
+
+1,
+
+heights=
+
+unit(
+
+c(
+
+0.52,
+
+0.48
+
+),
+
+"npc"
+
+)
+
+)
+
+)
+
+)
+
+print(
+
+mapa,
+
+vp=
+
+viewport(
+
+layout.pos.row=1
+
+)
+
+)
+
+grid.draw(
+
+editGrob(
+
+tabla_final,
+
+vp=
+
+viewport(
+
+layout.pos.row=2
+
+)
+
+)
+
+)
+
+dev.off()
+
+}
+
+cat(
+
+"\nFINALIZADO\n"
+
+)
+
+cat(
+
+"Revisa:\n"
+
+)
+
+cat(
+
+"mapas/CABECERA/\n"
+
+)
+```
+
+
+
+
+
+
